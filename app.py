@@ -4,10 +4,12 @@ LINE公式アカウント Webhookサーバー
 """
 
 import os
+import sys
 import json
 import hashlib
 import hmac
 import base64
+import traceback
 from datetime import datetime, timezone, timedelta
 from flask import Flask, request, abort
 
@@ -20,6 +22,10 @@ JST = timezone(timedelta(hours=9))
 
 LOG_DIR = os.environ.get("LOG_DIR", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
+
+print(f"[STARTUP] CHANNEL_SECRET set: {bool(CHANNEL_SECRET)}", flush=True)
+print(f"[STARTUP] CHANNEL_ACCESS_TOKEN set: {bool(CHANNEL_ACCESS_TOKEN)}", flush=True)
+print(f"[STARTUP] LOG_DIR: {LOG_DIR}", flush=True)
 
 
 def verify_signature(body, signature):
@@ -62,10 +68,10 @@ def save_message(event):
         content = f"[{msg_type}]"
 
     filepath = get_log_filepath(group_id, dt)
-    line_text = f"[{time_str}] user:{user_id[:8]}  {content}\n"
+    line_text = f"[{time_str}] user:{user_id[:8]} {content}\n"
     with open(filepath, "a", encoding="utf-8") as f:
         f.write(line_text)
-    print(f"Saved: {filepath} | {line_text.strip()}")
+    print(f"Saved: {filepath} | {line_text.strip()}", flush=True)
 
 
 def handle_join_event(event):
@@ -75,24 +81,32 @@ def handle_join_event(event):
     filepath = get_log_filepath(group_id, dt)
     with open(filepath, "a", encoding="utf-8") as f:
         f.write(f"[{dt.strftime('%Y-%m-%d %H:%M:%S')}] === Bot joined group ===\n")
-    print(f"Joined group: {group_id}")
+    print(f"Joined group: {group_id}", flush=True)
 
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    body = request.get_data()
-    signature = request.headers.get("X-Line-Signature", "")
-    if CHANNEL_SECRET and not verify_signature(body, signature):
-        abort(403)
-    data = json.loads(body)
-    events = data.get("events", [])
-    for event in events:
-        event_type = event.get("type", "")
-        if event_type == "message":
-            save_message(event)
-        elif event_type == "join":
-            handle_join_event(event)
-    return "OK", 200
+    try:
+        body = request.get_data()
+        signature = request.headers.get("X-Line-Signature", "")
+        print(f"[WEBHOOK] Received request, body length: {len(body)}, has signature: {bool(signature)}", flush=True)
+        if CHANNEL_SECRET and not verify_signature(body, signature):
+            print("[WEBHOOK] Signature verification FAILED", flush=True)
+            abort(403)
+        data = json.loads(body)
+        events = data.get("events", [])
+        print(f"[WEBHOOK] Events count: {len(events)}", flush=True)
+        for event in events:
+            event_type = event.get("type", "")
+            print(f"[WEBHOOK] Event type: {event_type}", flush=True)
+            if event_type == "message":
+                save_message(event)
+            elif event_type == "join":
+                handle_join_event(event)
+        return "OK", 200
+    except Exception as e:
+        print(f"[WEBHOOK ERROR] {traceback.format_exc()}", flush=True)
+        return "OK", 200
 
 
 @app.route("/health", methods=["GET"])
